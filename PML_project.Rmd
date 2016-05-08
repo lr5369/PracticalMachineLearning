@@ -1,0 +1,110 @@
+---
+title: "PML"
+author: "Lalita"
+date: "May 7, 2016"
+output: html_document
+
+---
+# Synopsis
+
+This project uses data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The data collected and to be used is in two files -- a training set and a testing set the URLs for which are provided. The source for the data is [http://groupware.les.inf.puc-rio.br/har] (http://groupware.les.inf.puc-rio.br/har). The objective is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. The results are to be recorded in a report describing how the model is built, how cross validation is used, the expected out_of_sample error, and the reasoning behind the choices made. The report should also include the results from using the model to predict 20 different test cases. 
+
+Towards meeting the objective and requirements specified above, the report is organized as follows: Section 1 deals with downloading and preparing data. Section 2 details the reasoning behind the selection of the model and certain parameters resulting from applying the model to the training data broken into two subsets -- one for building the model and one for validating it. Section 3 deals with applying the model to the supplied testing set. Section 4 provides a brief summary of the results.
+
+#1. Download and Prepare Data
+
+
+```{r}
+# Download training and testing data. Save as training.csv and testing.csv
+library(RCurl)
+library(caret)
+library(randomForest)
+trainfile <- getURL("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+               ssl.verifypeer=0L, followlocation=1L)
+writeLines(trainfile,'pml-training.csv')
+
+testfile <- getURL("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+               ssl.verifypeer=0L, followlocation=1L)
+writeLines(testfile,'pml-testing.csv')
+
+d_test <- read.csv("pml-training.csv")
+d_train <- read.csv("pml-testing.csv")
+dim(d_test)
+dim(d_train)
+```
+By using the str() command on the dataframes d_test and d_train one can see that, out of the 160 variables, the last one in d_test is 'classe' and the last one in d_train is 'problem_id'. Both of these are the response variables. So, we have 159 predictor variables. For the purpose of this project, out of the 159 variables, the first seven variables in each of the data sets can be safely removed, (i.e., X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp and new_window and num_window) for different reasons indicated  in their very names. There are several variables containing large number of "NA"values which only have minimal impact in model considerations and will be removed. If any variables have only a few missing values, they can be appropriately replaced with numerical values (average, for example), but it has not been done here.     
+
+```{r}
+# From d_test, remove columns 1 through 7, columns with mostly NA values and those with near zero variance
+d_test = d_test[,-c(1:7)]
+NAcolumns <- sapply(d_test, function(x) mean(is.na(x))) > 0.95
+d_test <- d_test[, NAcolumns==F]
+nzv <- nearZeroVar(d_test)
+d_test <- d_test[, -nzv]
+dim(d_test)
+```
+As can be seen from the above, the trimmed down version of the training set now has 52 predictors and 1 response variable('classe')  
+
+#2. Model
+
+Of all the multivariable models, there seems to general agreement that Random Forest is best. We will start with this model and if the results do not look promising we will attempt other models. A parellel version of Random Forest can also be considered, but we will attempt it only if Random Forest and others prove unsatisfactory.    
+
+Before we can apply the Random Forest model, we need to divide the training set d_test into two subsets - one for training and one for validation (or for testing if you wish). We will use the customary subdivision of 60% vs. 40% and refer to the training subset as d_test1 and the validation subset as d_test2:
+
+```{r}
+set.seed(1234) 
+inTrain <- createDataPartition(y=d_test$classe, p=0.6, list=F)
+d_test1 <- d_test[inTrain, ]
+d_test2 <- d_test[-inTrain, ]
+dim(d_test1) #number of rows and columns in the training set d_test1
+dim(d_test2) #number of rows and columns in the validation set d_test2
+```
+We stayed with the standard 60-40 split because higher than 60 may lead to overfitting and lower than 60 may not provide enough rows for model training.
+```{r}
+# select optimal tuning parameters by using 3-fold cross validation and fit model on d_test1
+# the accuracy goes up from 2-fold and 3-fold and decreases for 4-fold and 5-fold when applied to d_test2
+fitControl <- trainControl(method="cv", number=3, verboseIter=F)
+fit <- train(classe ~ ., data=d_test1, method="rf", trControl=fitControl)
+fit$finalModel
+```
+
+```{r}
+# Predict classe for validation set (d_test2) and get out_of_sample_error.
+predictions <- predict(fit, newdata=d_test2)
+confusionMatrix(d_test2$classe, predictions)
+```
+
+Since accuracy = 99.26%, predicted accuracy for the out_of_sample error is 0.74%.
+From discussion forums, we noticed that there are those that want to apply the same random forest process to the original full training dataset (d_test) to retrain it.
+But we see no need for this, since there is not much upside left for the accuracy number.
+
+#3. Predictions
+
+In the previous section we established that Random Forest does provide a good fit based on the training set d_test.
+We now apply it to the test set d_train consisting of 20 rows.
+
+```{r}
+# predict, convert to character vector as suggested in instructions and write files, one each for each problem_id
+predictions <- predict(fit, newdata=d_train)
+predictions <- as.character(predictions)
+
+pml_write_files <- function(x) {
+    n <- length(x)
+    for(i in 1:n) {
+        filename <- paste0("problem_id_", i, ".txt")
+        write.table(x[i], file=filename, quote=F, row.names=F, col.names=F)
+    }
+}
+
+pml_write_files(predictions)
+
+predictions  
+```  
+
+#4. Summary
+
+* The data was downloaded, converted to dataframes and cleaned to exclude columns/variables that were not necessary to answer the questions at hand.
+* Since Random Forest is considered among the best for multivarible problems, we started with it and found that it did indeed provide very high accuracy and very small out_of_sample error. For this reason, we concluded that Random Forest provides the model for this project. The only one that can do better is probably the parallel version of Random Forest.
+* training data was split into two sets (for training and validation purposes using 60-40 split). Higher than 60 was considered but rejected because over-fitting concerns.
+* 3-fold cross validation was chosen because 2, 4, or 5-fold cross validations did not produce any improvements. Furthermore, the cost in performance was high.
+* When we Chose to retain variables with values 'NA' exceeding 99% of all their values, close to 100 variables were retained causing significant perfrmance penalties at each level of the building process. So, we chose variables with values 'NA' exceeding 95% of all of their values to be retained.  This retained 53 variables95%  retained 53 variables. This choice gave us both good performance in computational power requirements as well as model performance.
